@@ -1,0 +1,13 @@
+{
+  "name": "secure-web-terminal",
+  "version": "1.0.0",
+  "description": "Skill: self-hosted browser terminal for Claude Code — ttyd + tmux under systemd --user, behind Cloudflare Tunnel and Cloudflare Access.",
+  "author": {
+    "name": "randyh0329",
+    "url": "https://github.com/randyh0329"
+  },
+  "homepage": "https://github.com/randyh0329/secure-web-terminal",
+  "repository": "https://github.com/randyh0329/secure-web-terminal",
+  "license": "MIT",
+  "keywords": ["claude-code", "ttyd", "tmux", "cloudflare-tunnel", "cloudflare-access", "web-terminal", "remote", "skill"]
+}

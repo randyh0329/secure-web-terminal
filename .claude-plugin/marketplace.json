@@ -1,0 +1,16 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "secure-web-terminal",
+  "description": "Agent skill for a self-hosted browser terminal for Claude Code behind Cloudflare Tunnel + Access.",
+  "owner": {
+    "name": "randyh0329",
+    "url": "https://github.com/randyh0329"
+  },
+  "plugins": [
+    {
+      "name": "secure-web-terminal",
+      "source": "./",
+      "description": "Self-hosted browser terminal for Claude Code behind Cloudflare Tunnel + Access (ttyd, tmux, systemd --user)."
+    }
+  ]
+}
