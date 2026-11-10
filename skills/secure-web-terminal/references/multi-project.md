@@ -65,10 +65,16 @@ A missing env file makes an orphaned instance fail fast instead of starting on a
 10. **Refuse to start** if the app is configured to bind a non-loopback address.
 11. **Keep the `Host` header when proxying** (no `changeOrigin`), so ttyd's `-O` origin check
     still passes for your own page. Pass `-O` to every ttyd instance.
-12. **For defense in depth, verify the Access JWT in the app**: check the `Cf-Access-Jwt-Assertion`
+12. **Same-origin checks on everything that changes state.** Refuse non-GET API requests and
+    every WebSocket upgrade whose `Origin` doesn't match `Host` (or that are marked
+    `Sec-Fetch-Site: cross-site`). Access authenticates the browser, so cross-site requests carry
+    a valid session. Add `X-Frame-Options: DENY` and a CSP with `frame-ancestors 'none'`, so a
+    hostile page can't trick a click onto a "delete project" control.
+13. **For defense in depth, verify the Access JWT in the app**: check the `Cf-Access-Jwt-Assertion`
     header against your team's certs (`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`)
     and the app's AUD tag, on both the HTTP and the upgrade path. Or turn on
-    "Protect with Access" on the tunnel hostname.
+    "Protect with Access" on the tunnel hostname. Accept RS256 only, fail closed if the keys
+    can't be fetched, and don't exempt loopback (cloudflared connects from loopback).
 
 ### Frontend notes
 

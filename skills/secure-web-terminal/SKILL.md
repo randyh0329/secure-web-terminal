@@ -234,8 +234,12 @@ paste into a typed path:
    - `--` stops a leading `-` from being parsed as a flag.
    - Pane targets need the trailing colon: `=main:`, not `=main`.
 
-That endpoint needs the same Access protection as the terminal. A full implementation is in
-the reference project linked below.
+That endpoint needs the same Access protection as the terminal, **and a same-origin check**. A
+multipart POST is a CORS "simple" request, so without one any site the user visits can make the
+browser call it with their Access session. Refuse non-GET requests whose `Origin` doesn't match
+`Host`, or that carry `Sec-Fetch-Site: cross-site`. Also send `X-Frame-Options: DENY` /
+`frame-ancestors 'none'` on the page. A full implementation is in the reference project linked
+below.
 
 ## Troubleshooting
 
