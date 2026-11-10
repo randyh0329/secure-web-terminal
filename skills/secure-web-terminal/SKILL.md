@@ -29,6 +29,9 @@ skip verification.
 - The host: Linux with systemd, a normal user with `sudo`. **Do not run any of this as root.**
   Root has no usable `systemd --user` manager on a headless VM.
 - A domain on Cloudflare and access to the Zero Trust dashboard (the free plan is enough).
+- **A host only the user logs into.** `127.0.0.1` keeps the network out, not other local
+  accounts: any other user on the same machine can connect to the ttyd port and get this user's
+  shell. On a shared host, stop and say so.
 - The exact email address(es) allowed in. Get this **before** anything is published.
 - Single session (one terminal) or multiple projects as tabs. Start with single. For multiple
   projects, read [references/multi-project.md](references/multi-project.md) after finishing it.
@@ -40,13 +43,20 @@ sudo apt-get update && sudo apt-get install -y tmux
 ttyd --version 2>/dev/null || true
 ```
 
-Use **ttyd 1.7 or newer**. Distro packages are often 1.6.x. If so, install the release binary:
+Use **ttyd 1.7 or newer**. Distro packages are often 1.6.x. If so, install a **pinned** release
+binary and check it against the release's published checksums before installing:
 
 ```bash
-curl -fsSL -o /tmp/ttyd https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64   # ttyd.aarch64 on ARM
-sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
+V=1.7.7 A=x86_64            # A=aarch64 on ARM; check https://github.com/tsl0922/ttyd/releases for newer
+cd "$(mktemp -d)"
+curl -fsSLO "https://github.com/tsl0922/ttyd/releases/download/$V/ttyd.$A"
+curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/$V/SHA256SUMS" | grep " ttyd.$A\$" | sha256sum -c -
+sudo install -m 0755 "ttyd.$A" /usr/local/bin/ttyd     # only if the line above printed OK
 ttyd --version
 ```
+
+The checksum confirms the file arrived intact and matches what the release lists. It doesn't make
+the upstream project trustworthy.
 
 Install Claude Code for the same user that will own the terminal, and make sure `claude` works in
 a normal SSH shell first.
@@ -99,7 +109,7 @@ After=tmux-main.service
 Type=exec
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
 Environment=TERM=xterm-256color
-ExecStart=/usr/bin/env ttyd -p 7681 -i 127.0.0.1 -W tmux new -A -s main
+ExecStart=/usr/bin/env ttyd -p 7681 -i 127.0.0.1 -W -O tmux new -A -s main
 Restart=on-failure
 RestartSec=2
 
@@ -113,6 +123,7 @@ What every flag is for, so nobody "simplifies" one away:
 |---|---|
 | `-i 127.0.0.1` | ttyd binds **all interfaces** by default. This flag is the loopback guarantee. Some builds want an interface name instead: use `-i lo`. |
 | `-W` | Since ttyd 1.7 the terminal is **read-only** unless `-W` is passed. Without it you can see the shell but can't type. |
+| `-O` | Reject WebSockets whose `Origin` doesn't match `Host`. Without it, ttyd accepts a socket opened by **any website**, so a malicious page you visit could try to drive your shell using your browser's Access session (cross-site WebSocket hijacking). cloudflared keeps the `Host` header, so same-origin connections still work. |
 | *no* `-c user:pass` | Access is the login. Basic auth in front of a shell adds a weak shared secret, not real protection. |
 | `tmux new -A -s main` | Attach if the session exists, create it otherwise. Reconnects resume the same session. |
 | `-t =main` | `=` forces an exact tmux match. A bare `-t main` prefix-matches and could hit `main-2`. |
@@ -138,16 +149,39 @@ where anyone can get a shell.
 
 1. **Zero Trust → Access → Applications → Add → Self-hosted.** Domain: `term.example.com`.
    Policy: **Allow**, Include → **Emails** → the exact address(es) from the user. Don't use
-   "everyone" or a whole email domain unless the user explicitly asks. Pick a session duration
-   the user is comfortable with.
+   "everyone" or a whole email domain unless the user explicitly asks. This login is the only
+   thing in front of a shell, so:
+   - Prefer an identity provider with **MFA** (Google, GitHub, Okta…) over email one-time PIN.
+     With a PIN, anyone who controls the inbox gets the shell.
+   - Keep the session duration short (hours, not weeks).
+   - In the app's cookie settings, turn on **HttpOnly** and set **SameSite** to `Lax` or `Strict`.
 2. **Zero Trust → Networks → Tunnels → Create tunnel (cloudflared).** Run the install command it
    shows on the host. That installs cloudflared as a system service with the tunnel token.
+   **The token is a credential.** Don't paste it into files, chat logs or repos, and rotate it
+   if it leaks.
 3. On the tunnel, add a **public hostname**: `term.example.com` → service `http://127.0.0.1:7681`.
    WebSockets work through the tunnel with no extra settings.
+4. On that hostname, turn on **Protect with Access** (the hostname's Access setting) and select
+   the application from step 1. cloudflared then checks the Access token on every request itself.
+   If the Access app is ever deleted or misconfigured, the tunnel fails closed instead of serving
+   an open shell.
 
-If the user prefers a locally managed tunnel (`cloudflared tunnel create` + `config.yml`), the
-ingress rule is the same: one hostname → `http://127.0.0.1:7681`, then a catch-all
-`http_status:404`.
+If the user prefers a locally managed tunnel (`cloudflared tunnel create` + `config.yml`), use the
+same rule and keep the JWT check:
+
+```yaml
+ingress:
+  - hostname: term.example.com
+    service: http://127.0.0.1:7681
+    originRequest:
+      access:
+        required: true
+        teamName: <your-team-name>          # <team>.cloudflareaccess.com
+        audTag: [<access-app-aud-tag>]      # Access app → Overview → Application Audience (AUD) tag
+  - service: http_status:404
+```
+
+Keep `~/.cloudflared/*.json` (tunnel credentials) at mode 0600, and never commit it.
 
 ## Step 5: verify the perimeter (required)
 
@@ -155,6 +189,13 @@ ingress rule is the same: one hostname → `http://127.0.0.1:7681`, then a catch
 # Logged out, the hostname must redirect to Access, never serve the terminal:
 curl -sI https://term.example.com | grep -iE '^(HTTP|location)'
 #   expect a 302 with a location on <team>.cloudflareaccess.com
+
+# On the host: a WebSocket from a foreign Origin must be refused (proves -O is active).
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Sec-WebSocket-Protocol: tty' \
+  -H 'Host: term.example.com' -H 'Origin: https://evil.example.net' http://127.0.0.1:7681/ws
+#   expect anything except 101 (000 = connection refused/closed). 101 means -O is missing.
 ```
 
 Then, by hand:
@@ -210,6 +251,8 @@ the reference project linked below.
 | `ttyd: command not found` in the journal | Add the right directory to `Environment=PATH=` |
 | Blank page or 404s behind a path prefix | Behind a reverse proxy on `/some/path`, ttyd needs `-b /some/path` |
 | Access login loops or the WebSocket fails | Check that the Access app domain matches the hostname exactly, and that no other app or path rule overlaps |
+| Page loads but the terminal never connects (only after adding `-O`) | Something rewrites `Host` (e.g. an `httpHostHeader` override on the tunnel, or a proxy using `changeOrigin`). Remove the rewrite. Don't remove `-O` |
+| `Forbidden` / 403 from cloudflared after enabling Protect with Access | Wrong team name or AUD tag in the tunnel's Access settings |
 
 Logs: `journalctl --user -u ttyd-main -u tmux-main -n 50 --no-pager` and
 `sudo journalctl -u cloudflared -n 50 --no-pager`.
@@ -220,6 +263,10 @@ Logs: `journalctl --user -u ttyd-main -u tmux-main -n 50 --no-pager` and
 - Never publish the hostname before the Access policy exists and is limited to named identities.
 - Never run the units as root or use system-level units for the terminal.
 - Never let the process serving the browser be the parent (cgroup) of the tmux server.
+- Never drop `-O`. Never add basic auth or a shared password in place of Access.
+- Never write the tunnel token, `~/.cloudflared/*.json`, or Access service tokens into a repo,
+  a skill, or a chat transcript.
+- Use only on a host where the user is the only account holder.
 
 ## Reference implementation
 

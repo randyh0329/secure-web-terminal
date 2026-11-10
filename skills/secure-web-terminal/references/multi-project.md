@@ -31,7 +31,7 @@ Type=exec
 EnvironmentFile=%h/webterm/env/%i.env        # PORT, IFACE, CWD written by the app
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
 Environment=TERM=xterm-256color
-ExecStart=/usr/bin/env ttyd -p ${PORT} -i ${IFACE} -b /term/%i -W tmux new -A -s %i -c ${CWD}
+ExecStart=/usr/bin/env ttyd -p ${PORT} -i ${IFACE} -b /term/%i -W -O tmux new -A -s %i -c ${CWD}
 Restart=on-failure
 RestartSec=2s
 ```
@@ -63,6 +63,12 @@ A missing env file makes an orphaned instance fail fast instead of starting on a
 9. **Make lifecycle operations idempotent**: "up" on a live project and "down" on a missing one
    both succeed.
 10. **Refuse to start** if the app is configured to bind a non-loopback address.
+11. **Keep the `Host` header when proxying** (no `changeOrigin`), so ttyd's `-O` origin check
+    still passes for your own page. Pass `-O` to every ttyd instance.
+12. **For defense in depth, verify the Access JWT in the app**: check the `Cf-Access-Jwt-Assertion`
+    header against your team's certs (`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`)
+    and the app's AUD tag, on both the HTTP and the upgrade path. Or turn on
+    "Protect with Access" on the tunnel hostname.
 
 ### Frontend notes
 
